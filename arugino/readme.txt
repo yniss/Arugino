@@ -1,3 +1,8 @@
+V4:
+- EEPROM memory for sensor values (and later time)
+- Interrupt by button press
+- Replaced Float switch pin from 2 to 4 because external interrupt 0 requires pin 2
+
 V3:
 - Added moisture sensor check
 
