@@ -1,3 +1,6 @@
+V6:
+- LCD added
+
 V5:
 - RTC added: set RTC and print time
 - Updated button print

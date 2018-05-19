@@ -1,9 +1,9 @@
+#include <Wire.h>
+#include <LCD.h>
+#include <LiquidCrystal_I2C.h>
 #include <DS3231.h>
 #include <EEPROM.h>
 
-//#include 
-// Init the DS3231 using the hardware interface
-//DS3231  rtc(SDA, SCL);
 
 #define TIME_HEADER  "T"   // Header tag for serial time sync message
 #define TIME_REQUEST  7    // ASCII bell character requests a time sync message 
@@ -15,6 +15,16 @@
 #define MEM_END_ADDR  EEPROM.length()-3*MEM_WORD_LEN-1 // 2 last Memory addresses are reserved
 #define MEM_CURR_ADDR EEPROM.length()-2*MEM_WORD_LEN-1 // Last written memory address (with moisture value and tstamp)
 #define MEM_IRIG_TS   EEPROM.length()-1*MEM_WORD_LEN-1 // tstamp of last irrigation
+
+#define LCD_ADDR 0x3F
+#define LCD_BACKLIGHT_PIN     3
+#define LCD_En_pin  2
+#define LCD_Rw_pin  1
+#define LCD_Rs_pin  0
+#define LCD_D4_pin  4
+#define LCD_D5_pin  5
+#define LCD_D6_pin  6
+#define LCD_D7_pin  7
 
 int BasePin    = 13; // output pin for NPN base
 int MoistPin   = A0;
@@ -29,7 +39,9 @@ const unsigned long interval=5000; // the time we need to wait - 10 sec for debu
 unsigned long previousMillis=0; // millis() returns unsigned long
 int MemAddr = 0; 
 int MemReadVal;
+int button_isr_flag = 0;
 DS3231  rtc(SDA, SCL);
+LiquidCrystal_I2C  lcd(LCD_ADDR,LCD_En_pin,LCD_Rw_pin,LCD_Rs_pin,LCD_D4_pin,LCD_D5_pin,LCD_D6_pin,LCD_D7_pin);
 
 void setup() {
   // put your setup code here, to run once:
@@ -53,6 +65,13 @@ void setup() {
   // initialize current mem address
   EEPROM.write(MEM_CURR_ADDR, 0); // AFTER 1ST TIME SHOULD BE COMMENTED
   MemAddr = EEPROM.read(MEM_CURR_ADDR); 
+
+  // LCD init
+  lcd.begin (16,2);
+  // Switch on the backlight
+  lcd.setBacklightPin(LCD_BACKLIGHT_PIN,POSITIVE);
+  lcd.setBacklight(LOW);
+  lcd.home (); // go home
 }
 
 void loop() {
@@ -99,15 +118,38 @@ void loop() {
       
 
     // check if interval time has passed
-    while (millis() - previousMillis < interval);
+    while (millis() - previousMillis < interval){
+      Serial.print("button_isr_flag is:");
+      Serial.println(button_isr_flag);
+      //if (button_isr_flag == 1)
+       // lcd_print();
+    }
     previousMillis = millis();
+
+//    if (button_isr_flag == 1)
+//      {
+//        button_isr_flag = 0;
+//        //TODO: 1. there's a bug in the time displayed 2. consider where to put the lcd as this is not immediatly printing
+//        Time irig_ts = MemReadTstamp(MEM_IRIG_TS); 
+//        char irig_dt[16];
+//        char irig_tm[16]; 
+//        // LCD - last irrigation time
+//        lcd.setBacklight(HIGH); // Backlight on
+//        sprintf(irig_dt, "%02d/%02d/%04d", irig_ts.date,irig_ts.mon,irig_ts.year);
+//        sprintf(irig_tm, "%02d:%02d:%02d", irig_ts.hour,irig_ts.min,irig_ts.sec);
+//        lcd.print(irig_dt);
+//        lcd.setCursor ( 0, 1 );
+//        lcd.print(irig_tm);
+//        delay(3000);
+//        lcd.setBacklight(LOW);  // Backlight off
+//      }
 }
 
 
 //------------//
 //   EEPROM   //
 //------------//
-//TODO: replace by MemWriteMoist which writes both sensor and tstamp
+//TODO: replace by MemWriteMoist which writes sensor, tstamp and irig (true/false)
 // MemWriteSens gets address and sensor value, 
 // writes value to Mem(address) and then increments the address by 1 word. 
 // Returns incremented address.
@@ -145,6 +187,24 @@ void MemWriteTstamp(int addr)
   EEPROM.write(addr+7, t.sec);  // SEC
 }
 
+Time MemReadTstamp(int addr)
+{
+  Time t;
+  uint8_t t_year_byte [2];
+  t_year_byte[0] = (t.year & 0xFF);
+  t_year_byte[1] = (t.year >> 8);
+  t.dow  = EEPROM.read(addr);    // DOW
+  t.date = EEPROM.read(addr+1); // DATE
+  t.mon  = EEPROM.read(addr+2);  // MON
+  t_year_byte[0] = EEPROM.read(addr+3); // YEAR (2B)
+  t_year_byte[1] = EEPROM.read(addr+4); // YEAR (2B)
+  t.hour = EEPROM.read(addr+5); // HOUR
+  t.min  = EEPROM.read(addr+6);  // MIN
+  t.sec  = EEPROM.read(addr+7);  // SEC
+  t.year = ((uint16_t)t_year_byte[1] << 8) | t_year_byte[0];
+  return t;
+}
+
 void MemWriteIrig(int addr, int irig)
 {
     EEPROM.write(addr, irig);
@@ -165,7 +225,21 @@ void Button()
   char dt[16];
   char tm[16]; 
   uint8_t irig;
-  
+  //TODO: move LCD stuff to outside ISR, consider moving other stuff as well
+//  Time irig_ts = MemReadTstamp(MEM_IRIG_TS); 
+
+//  // LCD - last irrigation time
+//  lcd.setBacklight(HIGH); // Backlight on
+//  sprintf(dt, "%02d/%02d/%04d", irig_ts.date,irig_ts.mon,irig_ts.year);
+//  sprintf(tm, "%02d:%02d:%02d", irig_ts.hour,irig_ts.min,irig_ts.sec);
+//  lcd.print(dt);
+//  lcd.setCursor ( 0, 1 );
+//  lcd.print(tm);
+//  delay(1000);
+//  lcd.setBacklight(LOW);  // Backlight off
+  button_isr_flag = 1;
+
+  // Print to monitor
   Serial.println("\n\n");
   Serial.println("Saved Moisture Values:");
   Serial.println("index\tvalue\tDate\t   Time\t     Irrigated");
@@ -217,3 +291,23 @@ void PrintTimeRTC()
     Serial.println(rtc.getTimeStr());
   }
 
+//------------//
+//     LCD    //
+//------------//
+void lcd_print()
+{
+  button_isr_flag = 0;
+  //TODO: 1. there's a bug in the time displayed 2. consider where to put the lcd as this is not immediatly printing
+  Time irig_ts = MemReadTstamp(MEM_IRIG_TS); 
+  char irig_dt[16];
+  char irig_tm[16]; 
+  // LCD - last irrigation time
+  lcd.setBacklight(HIGH); // Backlight on
+  sprintf(irig_dt, "%02d/%02d/%04d", irig_ts.date,irig_ts.mon,irig_ts.year);
+  sprintf(irig_tm, "%02d:%02d:%02d", irig_ts.hour,irig_ts.min,irig_ts.sec);
+  lcd.print(irig_dt);
+  lcd.setCursor ( 0, 1 );
+  lcd.print(irig_tm);
+  delay(3000);
+  lcd.setBacklight(LOW);  // Backlight off
+}
