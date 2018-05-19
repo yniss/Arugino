@@ -3,30 +3,27 @@ int MoistPin   = A0;
 int MoistVal   = 0;
 int FloatPin   = 2;
 int FloatState = 0;
-int FloatLedPin = 8;
-//int Sleepms    = 3600000; // 1 hour //TODO: uncomment
-//int Sleepms    = 600000; // 10 minutes for debug
-int Sleepms    = 5000; // 1 sec for debug
+//unsigned long interval=10000; // the time we need to wait - 10 sec for debug 
+unsigned long interval=86400000; // the time we need to wait
+unsigned long previousMillis=0; // millis() returns unsigned long
 
 void setup() {
   // put your setup code here, to run once:
   Serial.begin(9600);
   pinMode(BasePin, OUTPUT);
-  pinMode(FloatLedPin, OUTPUT);
+  digitalWrite(BasePin, LOW); // disable pump
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
-  digitalWrite(BasePin, LOW);
-  digitalWrite(FloatLedPin, LOW);
-  while(1) {
     // READ MOISTURE
     MoistVal = analogRead(MoistPin);
     Serial.println("Moist Sensor value:");
     Serial.println(MoistVal);
 
     // DRY SOIL
-    if(MoistVal > 800) {
+    //TODO: timer only (no use of sensor)
+    //if(MoistVal > 800) {
+    if(MoistVal > 0) {
       Serial.println("Soil is DRY - operate pump!");
       
       // CHECK WATER LEVEL
@@ -35,24 +32,27 @@ void loop() {
       Serial.println(FloatState);
       if(FloatState){
         Serial.println("Float Switch ON - NOT floating (NOT enough water)"); 
-        digitalWrite(FloatLedPin, HIGH);
-        digitalWrite(BasePin, LOW);
+        digitalWrite(BasePin, LOW); //TODO: does this turn LED OFF? if so - float switch should get voltage from other point
       }
       else {
         Serial.println("Float Switch OFF - floating (enough water)");
-        digitalWrite(FloatLedPin, LOW);
         digitalWrite(BasePin, HIGH);
-        // TODO: PUMP FOR HOW LONG? 
-        delay(1000); //TODO: for longer time
+        // Pump 
+        delay(5000); 
         digitalWrite(BasePin, LOW);
       }
       Serial.println("\n");   
       }
-
+      
     // MOIST SOIL
-    else {
+    else
       Serial.println("Soil is MOIST");
-    }
-  delay(Sleepms);     
-  }
+    
+    // check if interval time has passed
+    while (millis() - previousMillis < interval);
+    previousMillis = millis();
 }
+
+
+
+
