@@ -3,13 +3,14 @@ int MoistPin   = A0;
 int MoistVal   = 0;
 int FloatPin   = 2;
 int FloatState = 0;
-//unsigned long interval=10000; // the time we need to wait - 10 sec for debug 
+//unsigned long interval=5000; // the time we need to wait - 10 sec for debug 
 unsigned long interval=86400000; // the time we need to wait
 unsigned long previousMillis=0; // millis() returns unsigned long
 
 void setup() {
   // put your setup code here, to run once:
   Serial.begin(9600);
+
   pinMode(BasePin, OUTPUT);
   digitalWrite(BasePin, LOW); // disable pump
 }
@@ -21,9 +22,7 @@ void loop() {
     Serial.println(MoistVal);
 
     // DRY SOIL
-    //TODO: timer only (no use of sensor)
-    //if(MoistVal > 800) {
-    if(MoistVal > 0) {
+    if(MoistVal > 900) {
       Serial.println("Soil is DRY - operate pump!");
       
       // CHECK WATER LEVEL
@@ -32,12 +31,12 @@ void loop() {
       Serial.println(FloatState);
       if(FloatState){
         Serial.println("Float Switch ON - NOT floating (NOT enough water)"); 
-        digitalWrite(BasePin, LOW); //TODO: does this turn LED OFF? if so - float switch should get voltage from other point
+        digitalWrite(BasePin, LOW);
       }
       else {
         Serial.println("Float Switch OFF - floating (enough water)");
-        digitalWrite(BasePin, HIGH);
         // Pump 
+        digitalWrite(BasePin, HIGH);
         delay(5000); 
         digitalWrite(BasePin, LOW);
       }
