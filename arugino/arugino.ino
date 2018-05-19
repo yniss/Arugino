@@ -12,9 +12,9 @@
 #define MEM_IRIG_LEN 1  // Memory irrigation flag length in bytes
 #define MEM_SENS_LEN 1  // Memory sensor value length in bytes
 #define MEM_WORD_LEN  MEM_TS_LEN+MEM_IRIG_LEN+MEM_SENS_LEN // Memory full word length in bytes
-#define MEM_END_ADDR  EEPROM.length()-3*MEM_WORD_LEN // 2 last Memory addresses are reserved
-#define MEM_CURR_ADDR EEPROM.length()-2*MEM_WORD_LEN // Last written memory address (with moisture value and tstamp)
-#define MEM_IRIG_TS   EEPROM.length()-1*MEM_WORD_LEN // tstamp of last irrigation
+#define MEM_END_ADDR  EEPROM.length()-(3*MEM_WORD_LEN) // 2 last Memory addresses are reserved
+#define MEM_CURR_ADDR EEPROM.length()-(2*MEM_WORD_LEN) // Last written memory address (with moisture value and tstamp)
+#define MEM_IRIG_TS   EEPROM.length()-(1*MEM_WORD_LEN) // tstamp of last irrigation
 
 #define LCD_ADDR 0x3F
 #define LCD_BACKLIGHT_PIN     3
@@ -32,6 +32,7 @@ int MoistVal   = 0;
 int FloatPin   = 4;
 int FloatState = 0;
 int ButtonPin  = 2;
+int Irig = 0;
 const int PumpOnUs    = 5000;
 const int MoistThresh = 225;
 const unsigned long interval=8000; // the time we need to wait - 10 sec for debug 
@@ -65,7 +66,7 @@ void setup() {
   Serial.println();   
 
   // initialize current mem address
-  EEPROM.write(MEM_CURR_ADDR, 0); // AFTER 1ST TIME SHOULD BE COMMENTED
+  EEPROM.write(MEM_CURR_ADDR, 0); // AFTER 1ST TIME SHOULD BE COMMENTED (so that between log checks will not erase log)
   MemAddr = EEPROM.read(MEM_CURR_ADDR); 
 
   // LCD init
@@ -84,15 +85,10 @@ void loop() {
         log_print();
     }
     else {
-      //previousMillis = currentMillis;
-
       // READ MOISTURE 
       MoistVal = analogRead(MoistPin) / 4; // divide by 4 to write only 1 EEPRM byte
       Serial.print("Moist Sensor value: ");
       Serial.println(MoistVal);
-      // WRITE MOISTURE IN MEM
-      MemAddr = MemWriteSens(MemAddr, MoistVal); 
-      EEPROM.write(MEM_CURR_ADDR, MemAddr); // write last saved address (in a reserved address)
       
       // DRY SOIL
       if(MoistVal > MoistThresh) {
@@ -105,7 +101,7 @@ void loop() {
         if(FloatState){
           Serial.println("Float Switch ON - NOT floating (NOT enough water)"); 
           digitalWrite(BasePin, LOW);
-          MemWriteIrig(MemAddr-1, 0); // Write irig - false //TODO: MemAddr-1 is ugly...
+          Irig = 0;
         }
         else {
           Serial.println("Float Switch OFF - floating (enough water)");
@@ -113,9 +109,7 @@ void loop() {
           digitalWrite(BasePin, HIGH);
           delay(PumpOnUs); 
           digitalWrite(BasePin, LOW);
-          MemWriteIrig(MemAddr-1, 1); // Write irig - true //TODO: MemAddr-1 is ugly...
-          // Write irrigation time in Mem
-          MemWriteTstamp(MEM_IRIG_TS);
+          Irig = 1;
         }
         Serial.println();   
         }
@@ -123,9 +117,11 @@ void loop() {
       // MOIST SOIL
       else
       {
-        MemWriteIrig(MemAddr-1, 0); // Write irig - false //TODO: MemAddr-1 is ugly...
+        Irig = 0;
         Serial.println("Soil is MOIST");
       }
+      // Write moisture, time-stamp and irigated flag in memory. For log and LCD display
+      MemAddr = MemWrite(MemAddr, MoistVal, Irig); 
       previousMillis = millis(); // capture time of last irrigation, to be used in next cycle
     }
 }
@@ -134,17 +130,20 @@ void loop() {
 //------------//
 //   EEPROM   //
 //------------//
-//TODO: replace by MemWriteMoist which writes sensor, tstamp and irig (true/false)
-// MemWriteSens gets address and sensor value, 
-// writes value to Mem(address) and then increments the address by 1 word. 
-// Returns incremented address.
-int MemWriteSens(int addr, int val)
+// MemWrite gets address, sensor value and irigated bool. 
+// It writes sensor value to Mem(address), current time-stamp and irigation flag. 
+// It then writes current address inspecial mem address and returns it for next round.
+int MemWrite(int addr, int sens, int irig)
 {   
+  // Sensor value
   if (addr >= (MEM_END_ADDR-MEM_WORD_LEN)) // Check that we have enough space to write sensor value & ts, otherwise go to beggining
-    addr = 0;
-  EEPROM.write(addr, val);
-  MemWriteTstamp(addr+1); 
-  addr = addr + MEM_WORD_LEN; 
+    addr = 0;    
+  EEPROM.write(addr, sens); // sensor value
+  MemWriteTstamp(addr+1);   // time stamp
+  addr = addr + MEM_WORD_LEN;
+  EEPROM.write(MEM_CURR_ADDR, addr); // current address in special mem entry
+  if (irig == 1)
+    MemWriteTstamp(MEM_IRIG_TS); // time stamp of irigated
   return addr;
 }
 
@@ -180,11 +179,6 @@ Time MemReadTstamp(int addr)
   t.sec  = EEPROM.read(addr+7);  // SEC
   t.year = ((uint16_t)t_year_byte[1] << 8) | t_year_byte[0];
   return t;
-}
-
-void MemWriteIrig(int addr, int irig)
-{
-    EEPROM.write(addr, irig);
 }
 
 
@@ -242,10 +236,10 @@ void log_print()
   lcd.print(irig_dt);
   lcd.setCursor ( 0, 1 );
   lcd.print(irig_tm);
-  delay(3000);
+  delay(5000);
   lcd.setBacklight(LOW);  // Backlight off
 
-  //TODO: first index + value are wrong
+
   // Memory log print to serial monitor
   Serial.println("\n\n");
   Serial.println("Saved Moisture Values:");

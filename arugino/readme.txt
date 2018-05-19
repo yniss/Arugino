@@ -1,3 +1,6 @@
+V8:
+- Memory write bug fixes
+
 V7:
 - Different millis() approach as LCD did not work in V6
 
