@@ -1,3 +1,6 @@
+V7:
+- Different millis() approach as LCD did not work in V6
+
 V6:
 - LCD added
 
