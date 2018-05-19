@@ -1,3 +1,8 @@
+V9:
+- LCD bug fix
+- Added debounce circuit (RC & 555), switched button interrupt to rising edge
+- replaced irig with watrd
+
 V8:
 - Memory write bug fixes
 
