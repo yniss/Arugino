@@ -1,3 +1,8 @@
+V5:
+- RTC added: set RTC and print time
+- Updated button print
+- Updated memory write to include time stamp
+
 V4:
 - EEPROM memory for sensor values (and later time)
 - Interrupt by button press
