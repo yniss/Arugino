@@ -33,16 +33,16 @@ int FloatPin   = 4;
 int FloatState = 0;
 int ButtonPin  = 2;
 int Watrd = 0;
-const int PumpOnUs    = 7000;
-const int MoistThresh = 190;  // MOISTURE SENSOR THRESHOLD
+const int PumpOnUs    = 5000;
+const int MoistThresh = 200;  // MOISTURE SENSOR THRESHOLD
 //const unsigned long interval=8000; // the time we need to wait - 8 sec for debug 
 const unsigned long interval=86400000; // the time we need to wait
 unsigned long previousMillis; // millis() returns unsigned long
 unsigned long currentMillis;
 int MemAddr = 0; 
 int MemReadVal;
-int button_isr_flag = 0;
-int check_moist = 1;
+int ButtonFlag = 0;
+int CheckMoist = 1;
 DS3231  rtc(SDA, SCL);
 LiquidCrystal_I2C  lcd(LCD_ADDR,LCD_En_pin,LCD_Rw_pin,LCD_Rs_pin,LCD_D4_pin,LCD_D5_pin,LCD_D6_pin,LCD_D7_pin);
 
@@ -51,7 +51,7 @@ void setup() {
 
   pinMode(BasePin, OUTPUT);
   digitalWrite(BasePin, LOW); // disable pump
-  attachInterrupt(0, Button, RISING); // set button interrupt - external int0
+  attachInterrupt(0, ButtonISR, FALLING); // set button interrupt - external int0
   previousMillis = millis();
 
   // Set RTC
@@ -66,7 +66,7 @@ void setup() {
   Serial.println();   
 
   // initialize current mem address
-//  EEPROM.write(MEM_CURR_ADDR, 0); // AFTER 1ST TIME SHOULD BE COMMENTED (so that between log checks will not erase log)
+  //EEPROM.write(MEM_CURR_ADDR, 0); // AFTER 1ST TIME SHOULD BE COMMENTED (so that between log checks will not erase log)
   MemAddr = EEPROM.read(MEM_CURR_ADDR); 
 
   // LCD init
@@ -78,14 +78,7 @@ void setup() {
 }
 
 void loop() {
-//    // check if interval time between sensor checks has passed
-//    currentMillis = millis();    
-//    if (currentMillis - previousMillis < interval) { // didn't pass yet
-//      if (button_isr_flag == 1) // if button was pressed - print last irrigation
-//        log_print();
-//    }
-//    else {
-  if (check_moist == 1)
+  if (CheckMoist == 1)
     {
       // READ MOISTURE 
       MoistVal = analogRead(MoistPin) / 4; // divide by 4 to write only 1 EEPRM byte
@@ -128,12 +121,12 @@ void loop() {
     }
     currentMillis = millis();    
     if (currentMillis - previousMillis < interval) { // didn't pass yet
-      check_moist = 0;
-      if (button_isr_flag == 1) // if button was pressed - print last irrigation
+      CheckMoist = 0;
+      if (ButtonFlag == 1) // if button was pressed - print last irrigation
         log_print();
     }
     else
-      check_moist = 1;
+      CheckMoist = 1;
 }
 
 
@@ -200,9 +193,16 @@ Time MemReadTstamp(int addr)
 // TODO: will this work when arduino in sleep? should modify that interrupt wakes it first?
 // Button reads and prints all moisture sensor values and tstamp written in memory.
 // It also reads tstamp of last irrigation and prints it to LCD
-void Button()
+void ButtonISR()
 {
-  button_isr_flag = 1; // flag button was pressed, for irrigation print & LCD display
+  static unsigned long last_interrupt_time = 0;
+  unsigned long interrupt_time = millis();
+  // If interrupts come faster than 200ms, assume it's a bounce and ignore
+  if (interrupt_time - last_interrupt_time > 200) 
+  {
+    ButtonFlag = 1; // flag button was pressed, for irrigation print & LCD display
+  }
+  last_interrupt_time = interrupt_time;
 }
 
 
@@ -235,7 +235,7 @@ void log_print()
   char tm[16]; 
   uint8_t watrd;
   
-  button_isr_flag = 0;
+  ButtonFlag = 0;
   // LCD print
   lcd.setCursor ( 0, 0 );
   Time watrd_ts = MemReadTstamp(MEM_WATRD_TS); 

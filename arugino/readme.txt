@@ -1,3 +1,6 @@
+V10:
+- SW debouncer instead of HW RC circuit
+
 V9:
 - LCD bug fix
 - Added debounce circuit (RC & 555), switched button interrupt to rising edge
