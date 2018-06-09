@@ -3,28 +3,7 @@
 #include <LiquidCrystal_I2C.h>
 #include <DS3231.h>
 #include <EEPROM.h>
-
-
-#define TIME_HEADER  "T"   // Header tag for serial time sync message
-#define TIME_REQUEST  7    // ASCII bell character requests a time sync message 
-
-#define MEM_TS_LEN  8   // Memory time stamp length in bytes
-#define MEM_WATRD_LEN 1  // Memory irrigation flag length in bytes
-#define MEM_SENS_LEN 1  // Memory sensor value length in bytes
-#define MEM_WORD_LEN  MEM_TS_LEN+MEM_WATRD_LEN+MEM_SENS_LEN // Memory full word length in bytes
-#define MEM_END_ADDR  EEPROM.length()-(3*MEM_WORD_LEN) // 2 last Memory addresses are reserved
-#define MEM_CURR_ADDR EEPROM.length()-(2*MEM_WORD_LEN) // Last written memory address (with moisture value and tstamp)
-#define MEM_WATRD_TS   EEPROM.length()-(1*MEM_WORD_LEN) // tstamp of last irrigation
-
-#define LCD_ADDR 0x3F
-#define LCD_BACKLIGHT_PIN     3
-#define LCD_En_pin  2
-#define LCD_Rw_pin  1
-#define LCD_Rs_pin  0
-#define LCD_D4_pin  4
-#define LCD_D5_pin  5
-#define LCD_D6_pin  6
-#define LCD_D7_pin  7
+#include "arugino.h"
 
 int BasePin    = 13; // output pin for NPN base
 int MoistPin   = A0;
@@ -36,15 +15,31 @@ int Watrd = 0;
 const int PumpOnUs    = 5000;
 const int MoistThresh = 200;  // MOISTURE SENSOR THRESHOLD
 //const unsigned long interval=8000; // the time we need to wait - 8 sec for debug 
-const unsigned long interval=86400000; // the time we need to wait
+const unsigned long interval=86400000; // the time we need to wait - 24 hours
 unsigned long previousMillis; // millis() returns unsigned long
 unsigned long currentMillis;
-int MemAddr = 0; 
-int MemReadVal;
 int ButtonFlag = 0;
 int CheckMoist = 1;
-DS3231  rtc(SDA, SCL);
-LiquidCrystal_I2C  lcd(LCD_ADDR,LCD_En_pin,LCD_Rw_pin,LCD_Rs_pin,LCD_D4_pin,LCD_D5_pin,LCD_D6_pin,LCD_D7_pin);
+DS3231 rtc(SDA, SCL);
+LiquidCrystal_I2C lcd(LCD_ADDR,LCD_En_pin,LCD_Rw_pin,LCD_Rs_pin,LCD_D4_pin,LCD_D5_pin,LCD_D6_pin,LCD_D7_pin);
+
+// Declare Mem Units stuff:
+// Memory is split into units - a unit per moist sensor reading.
+// It holds the following information:
+// - Time stamp                       
+// - Sensor read value                
+// - Boolean flag - was irrigated or not
+// In order to access the units information easily - we'll hold an array of unit base addresses.
+uint8_t CurrMemUnit = 0;                                        // There are ~100 units (of 10 bytes) in EEPROM, so uint8_t is enough 
+const int MemUnitLen        = 10;                               // Sens - 1B, Tstamp-8B, Watrd flag - 1B
+const int MemUnitBarrier    = EEPROM.length()/MemUnitLen-2;     // Last Memory unit is reserved for Curr unit address & Last irrigation Tstamp
+const int NumMemUnits       = 100;                              // MemUnitBarrier/MemUnitLen;         
+// 2 Special addresses:
+const int MemAddr_WatrdTs    = EEPROM.length()-(1*MemUnitLen);  // Address of Last Irrigation's Tstamp
+const int MemAddr_CurrUnit   = EEPROM.length()-1;               // Address of Last written memory unit  
+int MemUnitArr[NumMemUnits];
+int MemReadVal;
+
 
 void setup() {
   Serial.begin(9600);
@@ -66,9 +61,10 @@ void setup() {
   Serial.println();   
 
   // initialize current mem address
-  //EEPROM.write(MEM_CURR_ADDR, 0); // AFTER 1ST TIME SHOULD BE COMMENTED (so that between log checks will not erase log)
-  MemAddr = EEPROM.read(MEM_CURR_ADDR); 
-
+//  EEPROM.write(MemAddr_CurrUnit, 0); // AFTER 1ST TIME SHOULD BE COMMENTED (so that between log checks will not erase log)
+  CurrMemUnit = (uint8_t)EEPROM.read(MemAddr_CurrUnit);
+  MemUnitInit(MemUnitArr,0,NumMemUnits,MemUnitLen); // initialize MemUnitArr with unit addresses 
+  
   // LCD init
   lcd.begin (16,2);
   // Switch on the backlight
@@ -115,15 +111,16 @@ void loop() {
         Watrd = 0;
         Serial.println("Soil is MOIST");
       }
-      // Write moisture, time-stamp and watered flag in memory. For log and LCD display
-      MemAddr = MemWrite(MemAddr, MoistVal, Watrd); 
+      // Write moisture value, time-stamp and watered flag in memory (for log and LCD display)
+      // In addition - update CurrMemUnit for next round
+      CurrMemUnit = MemWrite(CurrMemUnit, MoistVal, Watrd);
       previousMillis = millis(); // capture time of last irrigation, to be used in next cycle
     }
     currentMillis = millis();    
     if (currentMillis - previousMillis < interval) { // didn't pass yet
       CheckMoist = 0;
       if (ButtonFlag == 1) // if button was pressed - print last irrigation
-        log_print();
+         log_print();
     }
     else
       CheckMoist = 1;
@@ -134,22 +131,31 @@ void loop() {
 //------------//
 //   EEPROM   //
 //------------//
-// MemWrite gets address, sensor value and watered bool. 
-// It writes sensor value to Mem(address), current time-stamp and watered flag. 
-// It then writes current address inspecial mem address and returns it for next round.
-int MemWrite(int addr, int sens, int watrd)
+// After declaring an array of Mem Units,
+// we'll initialize the array with addresses.
+void MemUnitInit(int MemUnitArr[], int BaseAddr, int ArrLen, int UnitLen) {
+  for (int i=0; i<ArrLen; i++) {
+    MemUnitArr[i] = BaseAddr + i*UnitLen;
+  }
+} 
+
+// MemWrite gets current mem unit, sensor value and watered bool. 
+// It writes the data to the memory unit.
+// It then writes current address in special mem address and returns it for next round.
+uint8_t MemWrite(uint8_t CurrUnit, int Sens, int Watrd)
 {   
   // Sensor value
-  if (addr >= (MEM_END_ADDR-MEM_WORD_LEN)) // Check that we have enough space to write sensor value & ts, otherwise go to beggining
-    addr = 0;    
-  EEPROM.write(addr, sens); // sensor value
-  MemWriteTstamp(addr+1);   // time stamp
-  EEPROM.write(addr+9, watrd); // watered flag
-  addr = addr + MEM_WORD_LEN;
-  EEPROM.write(MEM_CURR_ADDR, addr); // current address in special mem entry
-  if (watrd == 1)
-    MemWriteTstamp(MEM_WATRD_TS); // time stamp of watering
-  return addr;
+  if (CurrUnit > MemUnitBarrier) // Check that we have enough space to write sensor value & ts, otherwise go to beggining
+    CurrUnit = 0;    
+  
+  EEPROM.write(MemUnitArr[CurrUnit], Sens);                 // sensor value
+  MemWriteTstamp((MemUnitArr[CurrUnit]));                   // time stamp
+  EEPROM.write((MemUnitArr[CurrUnit]+OFF_WATRD), Watrd);    // watered flag
+  CurrUnit++;
+  EEPROM.write(MemAddr_CurrUnit, CurrUnit);                 // write curr unit in special mem address
+  if (Watrd == 1)
+    MemWriteTstamp(MemAddr_WatrdTs);                        // time stamp of watering
+  return CurrUnit;
 }
 
 void MemWriteTstamp(int addr)
@@ -158,14 +164,14 @@ void MemWriteTstamp(int addr)
   uint8_t t_year_byte [2];
   t_year_byte[0] = (t.year & 0xFF);
   t_year_byte[1] = (t.year >> 8);
-  EEPROM.write(addr, t.dow);    // DOW
-  EEPROM.write(addr+1, t.date); // DATE
-  EEPROM.write(addr+2, t.mon);  // MON
-  EEPROM.write(addr+3, t_year_byte[0]); // YEAR (2B)
-  EEPROM.write(addr+4, t_year_byte[1]); // YEAR (2B)
-  EEPROM.write(addr+5, t.hour); // HOUR
-  EEPROM.write(addr+6, t.min);  // MIN
-  EEPROM.write(addr+7, t.sec);  // SEC
+  EEPROM.write(addr+OFF_DOW,    t.dow);             // DOW
+  EEPROM.write(addr+OFF_DATE,   t.date);            // DATE
+  EEPROM.write(addr+OFF_MON,    t.mon);             // MON
+  EEPROM.write(addr+OFF_YEAR0,  t_year_byte[0]);    // YEAR (B0)
+  EEPROM.write(addr+OFF_YEAR1,  t_year_byte[1]);    // YEAR (B1)
+  EEPROM.write(addr+OFF_HOUR,   t.hour);            // HOUR
+  EEPROM.write(addr+OFF_MIN,    t.min);             // MIN
+  EEPROM.write(addr+OFF_SEC,    t.sec);             // SEC
 }
 
 Time MemReadTstamp(int addr)
@@ -174,15 +180,15 @@ Time MemReadTstamp(int addr)
   uint8_t t_year_byte [2];
   t_year_byte[0] = (t.year & 0xFF);
   t_year_byte[1] = (t.year >> 8);
-  t.dow  = EEPROM.read(addr);    // DOW
-  t.date = EEPROM.read(addr+1); // DATE
-  t.mon  = EEPROM.read(addr+2);  // MON
-  t_year_byte[0] = EEPROM.read(addr+3); // YEAR (2B)
-  t_year_byte[1] = EEPROM.read(addr+4); // YEAR (2B)
-  t.hour = EEPROM.read(addr+5); // HOUR
-  t.min  = EEPROM.read(addr+6);  // MIN
-  t.sec  = EEPROM.read(addr+7);  // SEC
-  t.year = ((uint16_t)t_year_byte[1] << 8) | t_year_byte[0];
+  t.dow             = EEPROM.read(addr+OFF_DOW);    // DOW
+  t.date            = EEPROM.read(addr+OFF_DATE);   // DATE
+  t.mon             = EEPROM.read(addr+OFF_MON);    // MON
+  t_year_byte[0]    = EEPROM.read(addr+OFF_YEAR0);  // YEAR (B0)
+  t_year_byte[1]    = EEPROM.read(addr+OFF_YEAR1);  // YEAR (B1)
+  t.hour            = EEPROM.read(addr+OFF_HOUR);   // HOUR
+  t.min             = EEPROM.read(addr+OFF_MIN);    // MIN
+  t.sec             = EEPROM.read(addr+OFF_SEC);    // SEC
+  t.year            = ((uint16_t)t_year_byte[1] << 8) | t_year_byte[0];
   return t;
 }
 
@@ -228,26 +234,26 @@ void PrintTimeRTC()
 //------------//
 void log_print()
 {
-  int curr_addr = EEPROM.read(MEM_CURR_ADDR);
-  Time curr_ts;
-  uint8_t curr_ts_year_byte [2];
+  int CurrUnit = EEPROM.read(MemAddr_CurrUnit);
+  Time CurrTs;
+  uint8_t CurrTsYearByte [2];
   char dt[16];
   char tm[16]; 
-  uint8_t watrd;
+  uint8_t Watrd;
   
   ButtonFlag = 0;
   // LCD print
   lcd.setCursor ( 0, 0 );
-  Time watrd_ts = MemReadTstamp(MEM_WATRD_TS); 
-  char watrd_dt[16];
-  char watrd_tm[16]; 
+  Time Watrd_ts = MemReadTstamp(MemAddr_WatrdTs); 
+  char Watrd_dt[16];
+  char Watrd_tm[16]; 
   // LCD - last irrigation time
   lcd.setBacklight(HIGH); // Backlight on
-  sprintf(watrd_dt, "%02d/%02d/%04d", watrd_ts.date,watrd_ts.mon,watrd_ts.year);
-  sprintf(watrd_tm, "%02d:%02d:%02d", watrd_ts.hour,watrd_ts.min,watrd_ts.sec);
-  lcd.print(watrd_dt);
+  sprintf(Watrd_dt, "%02d/%02d/%04d", Watrd_ts.date,Watrd_ts.mon,Watrd_ts.year);
+  sprintf(Watrd_tm, "%02d:%02d:%02d", Watrd_ts.hour,Watrd_ts.min,Watrd_ts.sec);
+  lcd.print(Watrd_dt);
   lcd.setCursor ( 0, 1 );
-  lcd.print(watrd_tm);
+  lcd.print(Watrd_tm);
   delay(5000);
   lcd.setBacklight(LOW);  // Backlight off
 
@@ -256,23 +262,23 @@ void log_print()
   Serial.println("\n\n");
   Serial.println("Saved Moisture Values:");
   Serial.println("index\tvalue\tDate\t   Time\t     Watered");
-  Serial.println("-----\t-----\t----\t   ----\t     ---------");
-  for (int i=0; i<curr_addr; i=i+MEM_WORD_LEN)
+//  Serial.println("-----\t-----\t----\t   ----\t     ---------");
+  for (int i=0; i<CurrUnit; i=i+1)
   {
-    MemReadVal = EEPROM.read(i);
-    curr_ts.dow  = EEPROM.read(i+1);
-    curr_ts.date = EEPROM.read(i+2);
-    curr_ts.mon  = EEPROM.read(i+3);
-    curr_ts_year_byte[0] = EEPROM.read(i+4);
-    curr_ts_year_byte[1] = EEPROM.read(i+5);
-    curr_ts.year = ((uint16_t)curr_ts_year_byte[1] << 8) | curr_ts_year_byte[0];
-    curr_ts.hour = EEPROM.read(i+6);
-    curr_ts.min  = EEPROM.read(i+7);
-    curr_ts.sec  = EEPROM.read(i+8);
-    watrd = EEPROM.read(i+9);
-    sprintf(dt, "%02d/%02d/%04d", curr_ts.date,curr_ts.mon,curr_ts.year);
-    sprintf(tm, "%02d:%02d:%02d", curr_ts.hour,curr_ts.min,curr_ts.sec);
-    Serial.print(i/unsigned(MEM_WORD_LEN));   
+    MemReadVal          = EEPROM.read(MemUnitArr[i]+OFF_SENS);
+    CurrTs.dow          = EEPROM.read(MemUnitArr[i]+OFF_DOW);
+    CurrTs.date         = EEPROM.read(MemUnitArr[i]+OFF_DATE);
+    CurrTs.mon          = EEPROM.read(MemUnitArr[i]+OFF_MON);
+    CurrTsYearByte[0]   = EEPROM.read(MemUnitArr[i]+OFF_YEAR0);
+    CurrTsYearByte[1]   = EEPROM.read(MemUnitArr[i]+OFF_YEAR1);
+    CurrTs.year         = ((uint16_t)CurrTsYearByte[1] << 8) | CurrTsYearByte[0];
+    CurrTs.hour         = EEPROM.read(MemUnitArr[i]+OFF_HOUR);
+    CurrTs.min          = EEPROM.read(MemUnitArr[i]+OFF_MIN);
+    CurrTs.sec          = EEPROM.read(MemUnitArr[i]+OFF_SEC);
+    Watrd               = EEPROM.read(MemUnitArr[i]+OFF_WATRD);
+    sprintf(dt, "%02d/%02d/%04d", CurrTs.date,CurrTs.mon,CurrTs.year);
+    sprintf(tm, "%02d:%02d:%02d", CurrTs.hour,CurrTs.min,CurrTs.sec);
+    Serial.print(i);   
     Serial.print("\t"); 
     Serial.print(MemReadVal);
     Serial.print("\t"); 
@@ -280,7 +286,7 @@ void log_print()
     Serial.print(" ");
     Serial.print(tm);
     Serial.print("  ");
-    (watrd==1) ? Serial.print("True") : Serial.print("False");
+    (Watrd==1) ? Serial.print("True") : Serial.print("False");
     Serial.println();
   }
   Serial.println("\n\n");
