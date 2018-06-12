@@ -24,7 +24,9 @@
 #define OFF_HOUR  6
 #define OFF_MIN   7
 #define OFF_SEC   8
-#define OFF_WATRD 9
+#define OFF_TANK  9
+#define OFF_WATRD 10
+
 
 
   
